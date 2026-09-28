@@ -1173,7 +1173,7 @@ window.addEventListener("keydown", (e)=>{
     InputState.justPressed.add(e.code);
     InputState.pressSerial++;
     if(online.mode==="playing"&&online.role==="client"&&online.localPlayerId){
-      const km=keymap[1]||keymap[0]||{};
+      const km=keymap[0]||{};
       if(e.code===km.jump) online.localInputPending.jumpPressed=true;
       if(e.code===km.slide) online.localInputPending.slidePressed=true;
     }
@@ -5436,8 +5436,11 @@ function onlineRenderPlayerList(targetId,players){
     const left=document.createElement("span");left.textContent=player.name;
     if(player.isLocal){const tag=document.createElement("span");tag.className="you";tag.textContent=" You";left.appendChild(tag);}
     const right=document.createElement("small");
+    const liveTransport=onlineChannelIsOpen(online.connection);
+    const livePlayer=(player.id==="guest"&&liveTransport&&online.guestHandshakeComplete)||(player.id==="host"&&online.role==="host");
     if(player.isHost){right.textContent=player.ready?"Host · Ready":"Host";right.className="host";}
-    else right.textContent=player.ready?"Ready":(player.connected!==false?"Not ready":"Disconnected");
+    else if(livePlayer){right.textContent=player.ready?"Connected · Ready":"Connected";right.className="host";}
+    else right.textContent=player.ready?"Ready":"Disconnected";
     row.append(left,right);el.appendChild(row);
   }
   if(online.role!=="host" && list.length===0){
@@ -5477,15 +5480,16 @@ function onlineRefreshHostMapOptions(){
 }
 
 function onlineBuildLobbyPlayers(){
+  const live=onlineChannelIsOpen(online.connection);
   const list=[{
     id:"host",
     name:onlineSafeName(online.role==="host"?online.localName:online.hostName,"Player 1"),
     isHost:true,
     isLocal:online.role==="host",
     ready:true,
-    connected:true
+    connected:online.role==="host"?true:live
   }];
-  if(online.remotePlayerId&&online.connectionOpen&&online.guestHandshakeComplete){
+  if(online.remotePlayerId&&live&&online.guestHandshakeComplete){
     list.push({
       id:"guest",
       name:onlineSafeName(online.remoteName,"Player 2"),
@@ -5502,7 +5506,7 @@ function updateOnlineLobbyControls(){
   const guest=players.find(p=>!p.isHost);
   const start=document.getElementById("onlineStartMatchBtn");
   if(start){
-    const canStart=online.role==="host"&&online.mode==="hostLobby"&&online.peerOpen&&online.connectionOpen&&online.guestHandshakeComplete&&!!guest&&guest.connected!==false&&(!online.readyRequired||guest.ready)&&!online.gameStarted&&!!online.lobbySettings.mode;
+    const canStart=online.role==="host"&&online.mode==="hostLobby"&&online.peerOpen&&onlineChannelIsOpen(online.connection)&&online.guestHandshakeComplete&&!!guest&&online.guestConnection===online.connection&&(!online.readyRequired||guest.ready)&&!online.gameStarted&&!!online.lobbySettings.mode;
     start.disabled=!canStart;
     if(online.mode==="starting"||online.pendingSetupAck)start.textContent="Starting…";
     else start.textContent="Start Game";
@@ -5609,6 +5613,7 @@ function onlineHandleHostConnection(connection){
     online.connectionOpen=true;
     online.transportOpen=true;
     online.connected=true;
+    online.connectionState="connected";
     online.lastMessageAt=performance.now();
     onlineSetConnectionState(online.guestHandshakeComplete?"lobby":"connected");
     onlineSetStatus("Connected. Waiting for player…","good");
@@ -5713,6 +5718,7 @@ function onlineAttachGuestConnection(connection,generation){
     online.connectionOpen=true;
     online.transportOpen=true;
     online.connected=true;
+    online.connectionState="connected";
     online.peerOpen=!!(online.peer&&!online.peer.destroyed&&online.peer.open===true);
     online.lastMessageAt=performance.now();
     onlineSetConnectionState("connected");
@@ -5891,47 +5897,47 @@ function onlineHandleGameMessage(msg,connection=online.connection){
   if(online.role==="client"&&msg.type==="snapshot"){onlineApplySnapshot(msg);return;}
 }
 function onlineAcceptRemoteInput(msg,connection=online.connection){
-  if(online.role!=="host"||!ACTIVE_PLAYERS.length)return;
+  if(online.role!=="host")return false;
   if(connection!==online.connection||!onlineChannelIsOpen(connection)){
     if(!online._inputChannelBlockedLogged){online._inputChannelBlockedLogged=true;console.warn("Guest input ignored: channel is not active.");}
-    return;
+    return false;
   }
-  const transportPeer=String(connection.peer||"");
-  const mappedPlayerId=connection.rooftopPlayerId||online.peerIdToPlayerId.get(transportPeer)||"";
-  if(mappedPlayerId!=="guest"){
+  const mapped=String(connection.rooftopPlayerId||online.peerIdToPlayerId.get(String(connection.peer||""))||"");
+  if(mapped!=="guest"){
     if(!online._inputMappingLogged){online._inputMappingLogged=true;console.warn("Host input ignored: guest player mapping missing.");}
-    return;
+    return false;
   }
-  const playerId=typeof msg.playerId==="string"?msg.playerId.trim().slice(0,120):"";
+  const playerId=String(msg.playerId||"");
   if(playerId!=="guest"){
     if(!online._inputIdMismatchLogged){online._inputIdMismatchLogged=true;console.warn("Guest input ignored: player ID mismatch.");}
-    return;
+    return false;
   }
+  const seq=Number(msg.seq);
+  if(!Number.isInteger(seq)||seq<0)return false;
+  const previous=Number.isInteger(online.remoteInputsByPlayerId.get("guest")?.seq)?online.remoteInputsByPlayerId.get("guest").seq:-1;
+  if(seq<=previous)return false;
+  const bool=v=>v===true;
+  const input={
+    left:bool(msg.left),right:bool(msg.right),
+    jumpHeld:bool(msg.jumpHeld),slideHeld:bool(msg.slideHeld),
+    jumpPressed:bool(msg.jumpPressed),slidePressed:bool(msg.slidePressed),
+    dashDir:(Number(msg.dashDir)===-1||Number(msg.dashDir)===1)?Number(msg.dashDir):0,
+    seq,receivedAt:performance.now()
+  };
+  online.remoteInputsByPlayerId.set("guest",input);
   const p=ACTIVE_PLAYERS.find(x=>String(x.networkId)==="guest");
   if(!p){
     if(!online._inputRuntimePlayerLogged){online._inputRuntimePlayerLogged=true;console.warn("Guest input ignored: guest runtime player missing.");}
-    return;
+    return false;
   }
-  const seq=Number(msg.seq);
-  if(!Number.isInteger(seq)||seq<0)return;
-  const previous=Number.isInteger(p.networkLastInputSeq)?p.networkLastInputSeq:-1;
-  if(seq<=previous)return;
-  const bool=v=>v===true;
-  if(typeof msg.left!=="boolean"||typeof msg.right!=="boolean"||typeof msg.jumpHeld!=="boolean"||typeof msg.slideHeld!=="boolean"||typeof msg.jumpPressed!=="boolean"||typeof msg.slidePressed!=="boolean")return;
-  const now=performance.now()/1000;
+  p.networkInput={...input};
   p.networkLastInputSeq=seq;
-  p.networkLastInputTime=now;
-  p.networkInput={left:bool(msg.left),right:bool(msg.right),jumpHeld:bool(msg.jumpHeld),slideHeld:bool(msg.slideHeld),jumpPressed:bool(msg.jumpPressed),slidePressed:bool(msg.slidePressed),dashDir:0,seq};
-  if(msg.jumpPressed===true)p.networkJumpSerial=seq;
-  if(msg.slidePressed===true)p.networkSlideSerial=seq;
-  const dash=Number(msg.dashDir);
-  if(dash===-1||dash===1)p.pendingDashDir=dash;
-  online.remoteInputsByPlayerId.set("guest",{left:p.networkInput.left,right:p.networkInput.right,jumpHeld:p.networkInput.jumpHeld,slideHeld:p.networkInput.slideHeld,jumpPressed:p.networkInput.jumpPressed,slidePressed:p.networkInput.slidePressed,dashDir:dash===-1||dash===1?dash:0,lastSequence:seq,lastReceivedAt:now});
-  online.lastGuestInputReceivedAt=performance.now();
-  online._inputChannelBlockedLogged=false;
-  online._inputMappingLogged=false;
-  online._inputIdMismatchLogged=false;
-  online._inputRuntimePlayerLogged=false;
+  p.networkLastInputTime=input.receivedAt/1000;
+  if(input.jumpPressed)p.networkJumpSerial=seq;
+  if(input.slidePressed)p.networkSlideSerial=seq;
+  if(input.dashDir)p.pendingDashDir=input.dashDir;
+  online.lastGuestInputReceivedAt=input.receivedAt;
+  online._inputChannelBlockedLogged=false;online._inputMappingLogged=false;online._inputIdMismatchLogged=false;online._inputRuntimePlayerLogged=false;
   if(!online.firstGuestInputReceived){
     online.firstGuestInputReceived=true;
     console.info("Host received first guest input.");
@@ -5941,6 +5947,7 @@ function onlineAcceptRemoteInput(msg,connection=online.connection){
     console.info("Host applying first guest input to player guest.");
     onlineSendSnapshotNow();
   }
+  return true;
 }
 
 async function onlineBeginCreate(){
@@ -6160,7 +6167,7 @@ function onlineUpdateClientInterpolation(dt){
   if(local){
     if(!Number.isFinite(local.x)||!Number.isFinite(local.y)){local.x=customFinite(local.targetX,local.x||0);local.y=customFinite(local.targetY,local.y||0);}
   }
-  updateCamera(dt,CURRENT_LEVEL);
+  if(CURRENT_LEVEL)updateCamera(dt,CURRENT_LEVEL);
   updateParticles(dt);
   if(shakeTime>0)shakeTime=Math.max(0,shakeTime-dt);
 }
@@ -6168,11 +6175,9 @@ function onlineUpdateClientInterpolation(dt){
 function onlineSendInputIfDue(nowMs,force=false){
   if(online.role!=="client"||online.mode!=="playing"||!online.transportOpen||!online.handshakeComplete||!online.localPlayerId||!onlineChannelIsOpen(online.connection))return false;
   const localId=String(online.localPlayerId);
-  const localIndex=ACTIVE_PLAYERS.findIndex(p=>String(p.networkId)===localId);
-  if(localIndex<0)return false;
-  const minInterval=1000/ONLINE_INPUT_RATE;
-  const km=keymap[1]||keymap[0]||{};
-  const local=ACTIVE_PLAYERS[localIndex];
+  const local=ACTIVE_PLAYERS.find(p=>String(p.networkId)===localId);
+  if(!local)return false;
+  const km=keymap[0]||{};
   const state={
     left:!!(km.left&&InputState.keys.has(km.left)),
     right:!!(km.right&&InputState.keys.has(km.right)),
@@ -6180,23 +6185,22 @@ function onlineSendInputIfDue(nowMs,force=false){
     slideHeld:!!(km.slide&&InputState.keys.has(km.slide)),
     jumpPressed:!!online.localInputPending.jumpPressed,
     slidePressed:!!online.localInputPending.slidePressed,
-    dashDir:local&&(-1===local.pendingDashDir||1===local.pendingDashDir)?local.pendingDashDir:0
+    dashDir:(local.pendingDashDir===-1||local.pendingDashDir===1)?local.pendingDashDir:0
   };
   const sig=JSON.stringify(state);
-  const due=nowMs-online.inputLastSentAt>=minInterval;
+  const due=nowMs-online.inputLastSentAt>=1000/ONLINE_INPUT_RATE;
   const changed=sig!==online.lastSentInputSignature;
   if(!force&&!due&&!changed)return false;
-  const seq=online.lastInputSequence;
-  const msg={type:"input",seq,playerId:localId,left:state.left,right:state.right,jumpHeld:state.jumpHeld,slideHeld:state.slideHeld,jumpPressed:state.jumpPressed,slidePressed:state.slidePressed,dashPressed:state.dashDir!==0,actionPressed:state.slidePressed,dashDir:state.dashDir};
+  const seq=Math.max(1,Number(online.lastInputSequence||0));
+  const msg={type:"input",seq,playerId:localId,left:state.left,right:state.right,jumpHeld:state.jumpHeld,slideHeld:state.slideHeld,jumpPressed:state.jumpPressed,slidePressed:state.slidePressed,dashPressed:state.dashDir!==0,actionPressed:false,dashDir:state.dashDir};
   if(!sendOnlineMessage(msg,online.connection))return false;
   online.lastInputSequence=seq+1;
   online.inputLastSentAt=nowMs;
   online.lastSentInputSignature=sig;
-  online._missingLocalIdLogged=false;
   online.localInputPending.jumpPressed=false;
   online.localInputPending.slidePressed=false;
-  if(local&&state.dashDir)local.pendingDashDir=0;
-  if(online.lastInputSequence===1)console.info("Guest input channel active; first input sent.");
+  if(state.dashDir)local.pendingDashDir=0;
+  if(!online._guestInputSendLogged){online._guestInputSendLogged=true;console.info("Guest input channel active; first input sent.");}
   return true;
 }
 
@@ -6222,7 +6226,7 @@ function onlineNetworkPump(nowMs){
 
 function onlineResetRuntimeState(){
   online.connectionGeneration++;clearTimeout(online.connectionTimer);online.connectionTimer=null;clearTimeout(online.startSequenceTimer);online.startSequenceTimer=null;
-  online.mode="offline";online.role=null;online.connected=false;online.ready=false;online.gameStarted=false;online.peerReady=false;online.peerOpen=false;online.connectionOpen=false;online.transportOpen=false;online.guestHandshakeComplete=false;online.handshakeComplete=false;online.matchSetupReady=false;online.lastMessageAt=0;online.mapReady=false;online.staticWorldLoaded=false;online.hasReceivedFirstSnapshot=false;online.pendingFirstSnapshot=null;online.runtimePlayersById.clear();online.connectionState="idle";online.sequence=0;online.lastSnapshotSequence=-1;online.lastSnapshotTime=0;online.lastInputSequence=0;online.inputLastSentAt=0;online.snapshotLastSentAt=0;online.snapshotBuffer.length=0;online.pendingRemoteInputs.clear();online.remoteInputsByPlayerId.clear();online.peerIdToPlayerId.clear();online.remoteInputState=null;online.lastGuestInputReceivedAt=0;online.firstGuestInputReceived=false;online.firstGuestInputApplied=false;online.roomCode="";online.signalingPeerId=null;online.hostPeerId=null;online.guestPeerId=null;online.remotePlayerId=null;online.localPlayerId=null;online.remoteName="Player 2";online.hostName="Player 1";online.localName="";online.players=[];online.lobbySettings={mode:"classic",mapId:"training",mapSource:"builtin",mapName:"Training Arena",duration:180};online.mapPayload=null;online.mapReceived=false;online.mapId=null;online.mapName="";online.awaitingOperation=false;online.pendingSetupAck=false;online.startRequestId="";online.localReady=false;online.remoteReady=false;online.lastSentInputSignature="";online.pingMs=null;online.pingSentAt=0;online.tearingDown=false;online.onlineLoopActive=false;online.gameStarted=false;online.previousLocalSettings=null;online.peer=null;online.connection=null;online.controlChannel=null;online.gameChannel=null;onlineSyncPeerAliases();
+  online.mode="offline";online.role=null;online.connected=false;online.ready=false;online.gameStarted=false;online.peerReady=false;online.peerOpen=false;online.connectionOpen=false;online.transportOpen=false;online.guestHandshakeComplete=false;online.handshakeComplete=false;online.matchSetupReady=false;online.lastMessageAt=0;online.mapReady=false;online.staticWorldLoaded=false;online.hasReceivedFirstSnapshot=false;online.pendingFirstSnapshot=null;online.runtimePlayersById.clear();online.connectionState="idle";online.sequence=0;online.lastSnapshotSequence=-1;online.lastSnapshotTime=0;online.lastInputSequence=0;online.inputLastSentAt=0;online.snapshotLastSentAt=0;online.snapshotBuffer.length=0;online.pendingRemoteInputs.clear();online.remoteInputsByPlayerId.clear();online.peerIdToPlayerId.clear();online.remoteInputState=null;online.lastGuestInputReceivedAt=0;online.firstGuestInputReceived=false;online.firstGuestInputApplied=false;online.roomCode="";online.signalingPeerId=null;online.hostPeerId=null;online.guestPeerId=null;online.remotePlayerId=null;online.localPlayerId=null;online.remoteName="Player 2";online.hostName="Player 1";online.localName="";online.players=[];online.lobbySettings={mode:"classic",mapId:"training",mapSource:"builtin",mapName:"Training Arena",duration:180};online.mapPayload=null;online.mapReceived=false;online.mapId=null;online.mapName="";online.awaitingOperation=false;online.pendingSetupAck=false;online.startRequestId="";online.localReady=false;online.remoteReady=false;online.lastSentInputSignature="";online._guestInputSendLogged=false;online.pingMs=null;online.pingSentAt=0;online.tearingDown=false;online.onlineLoopActive=false;online.gameStarted=false;online.previousLocalSettings=null;online.peer=null;online.connection=null;online.controlChannel=null;online.gameChannel=null;onlineSyncPeerAliases();
 }
 function onlineCloseTransport(){
   online.tearingDown=true;online.connectionGeneration++;clearTimeout(online.connectionTimer);online.connectionTimer=null;
