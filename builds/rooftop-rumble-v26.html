@@ -275,7 +275,7 @@
   @media(max-width:520px){.online-card{padding:14px}.online-title{font-size:24px}.main-menu-primary button{min-height:56px;font-size:17px}.online-code-display{font-size:28px}}
 
 </style>
-<meta name="rooftop-rumble-build" content="v26">
+<meta name="rooftop-rumble-build" content="v24">
 </head>
 <body>
 <div id="app">
@@ -314,7 +314,7 @@
               <span>Fixed multiplayer start/countdown pause desync, removed the circular tagger marker, corrected tag trail layering, and expanded local-play parity for the match intro, roster presentation, tag effects, and match-end statistics.</span>
             </div>
             <div class="changelog-entry"><strong>v25</strong><span>Grey structural support pillars are now walk-through on every map source, including generated maps; only their player collision is removed, while their appearance remains unchanged.</span></div>
-            <div class="changelog-entry"><strong>v26</strong><span>Fixed online match startup deadlocks: the host starts after sending match setup, and guests queue the start command until their map is ready.</span></div>
+            <div class="changelog-entry"><strong>v26</strong><span>Multiplayer startup begins immediately on the host instead of waiting for every guest to finish loading; each guest joins once its own map is ready.</span></div>
             <div class="changelog-entry"><strong>v24</strong><span>Background-layer objects, including background pillars, are now collision-disabled consistently for built-in, generated, and imported maps while remaining fully visible.</span></div>
             <div class="changelog-entry">
               <strong>v23</strong>
@@ -1082,7 +1082,7 @@ const online = {
   localInputPending:{jumpPressed:false,slidePressed:false}, pingMs:null, pingSentAt:0,
   previousLocalSettings:null, awaitingOperation:false, tearingDown:false, lastSentInputSignature:"",
   resumeToken:"", reconnecting:false, reconnectTimer:null, reconnectAttempts:0, reconnectDeadline:0,
-  pendingJoinAcks:new Map(), pendingStartMatch:null,
+  pendingJoinAcks:new Map(),
   lastGuestInputReceivedAt:0, firstGuestInputReceived:false, firstGuestInputApplied:false, lobbyNotices:[],
   sharedPaused:false, pauseSource:"", pauseMessage:"",
   connectionGeneration:0, onlineLoopActive:false, startRequestId:"", guestPeerId:null, hostPeerId:null, players:[], connectionTimer:null, startSequenceTimer:null, pendingFirstSnapshot:null, readyRequired:true
@@ -5955,7 +5955,7 @@ function onlineSpawnForIndex(level,index){return randomFloorSpotOrFallback(level
 
 function onlineStartClientMatch(msg){
   if(online.mode!=="clientLobby"&&online.mode!=="joining"&&online.mode!=="connected"&&online.mode!=="playing")return;
-  if(!online.matchSetupReady||!online.mapReceived||!CURRENT_LEVEL){online.pendingStartMatch=msg;onlineSetStatus("Loading the match…","warn");return;}
+  if(!online.matchSetupReady||!online.mapReceived||!CURRENT_LEVEL)return;
   if(typeof msg.matchId!=="string"||!msg.matchId||msg.matchId!==online.startRequestId)return;
   const state=typeof msg.mode==="string"?msg.mode:"classic";MATCH.mode=ONLINE_MODE_KEYS.includes(state)?state:"classic";CURRENT_SETTINGS.mode=MATCH.mode;CURRENT_SETTINGS.duration=customClampNumber(Number(msg.duration),60,360,180);MATCH.timeLeft=customClampNumber(Number(msg.remainingTime),0,CURRENT_SETTINGS.duration,CURRENT_SETTINGS.duration);
   CURRENT_SETTINGS.playerCount=Math.min(ONLINE_MAX_PLAYERS,Math.max(2,online.players.filter(p=>p.connected!==false).length));CURRENT_SETTINGS.splitscreen=false;clearGameplayInput();
@@ -6101,8 +6101,8 @@ function onlineSendInputIfDue(nowMs,force=false){
 /* v18: removed dead duplicate of onlineNetworkPump() (overridden by a later definition) */
 
 function onlineResetRuntimeState(){
-  online.connectionGeneration++;clearTimeout(online.connectionTimer);online.connectionTimer=null;clearTimeout(online.startSequenceTimer);online.startSequenceTimer=null;clearTimeout(online.reconnectTimer);online.reconnectTimer=null;onlineHostConnections().clear();onlineHostInfo().clear();onlineSetupAcks().clear();online.pendingJoinAcks.clear();online.pendingStartMatch=null;
-  online.mode="offline";online.role=null;online.connected=false;online.ready=false;online.gameStarted=false;online.peerReady=false;online.peerOpen=false;online.connectionOpen=false;online.transportOpen=false;online.guestHandshakeComplete=false;online.handshakeComplete=false;online.matchSetupReady=false;online.lastMessageAt=0;online.mapReady=false;online.staticWorldLoaded=false;online.hasReceivedFirstSnapshot=false;online.pendingFirstSnapshot=null;online.runtimePlayersById.clear();online.connectionState="idle";online.sequence=0;online.lastSnapshotSequence=-1;online.lastSnapshotTime=0;online.lastInputSequence=0;online.inputLastSentAt=0;online.snapshotLastSentAt=0;online.snapshotBuffer.length=0;online.pendingRemoteInputs.clear();online.remoteInputsByPlayerId.clear();online.peerIdToPlayerId.clear();online.remoteInputState=null;online.lastGuestInputReceivedAt=0;online.firstGuestInputReceived=false;online.firstGuestInputApplied=false;online.sharedPaused=false;online.pauseSource="";online.pauseMessage="";online.roomCode="";online.signalingPeerId=null;online.hostPeerId=null;online.guestPeerId=null;online.remotePlayerId=null;online.localPlayerId=null;online.remoteName="Player 2";online.hostName="Player 1";online.localName="";online.players=[];online.lobbySettings={mode:"classic",mapId:"training",mapSource:"builtin",mapName:"Training Arena",duration:180};online.mapPayload=null;online.mapReceived=false;online.mapId=null;online.mapName="";online.awaitingOperation=false;online.pendingSetupAck=false;online.startRequestId="";online.localReady=false;online.remoteReady=false;online.lastSentInputSignature="";online._guestInputSendLogged=false;online.pingMs=null;online.pingSentAt=0;online.tearingDown=false;online.onlineLoopActive=false;online.gameStarted=false;online.previousLocalSettings=null;online.peer=null;online.connection=null;online.controlChannel=null;online.gameChannel=null;online.resumeToken="";online.reconnecting=false;online.reconnectAttempts=0;online.reconnectDeadline=0;clearTimeout(online.reconnectTimer);online.reconnectTimer=null;online.pendingJoinAcks.clear();online.pendingStartMatch=null;onlineSyncPeerAliases();
+  online.connectionGeneration++;clearTimeout(online.connectionTimer);online.connectionTimer=null;clearTimeout(online.startSequenceTimer);online.startSequenceTimer=null;clearTimeout(online.reconnectTimer);online.reconnectTimer=null;onlineHostConnections().clear();onlineHostInfo().clear();onlineSetupAcks().clear();online.pendingJoinAcks.clear();
+  online.mode="offline";online.role=null;online.connected=false;online.ready=false;online.gameStarted=false;online.peerReady=false;online.peerOpen=false;online.connectionOpen=false;online.transportOpen=false;online.guestHandshakeComplete=false;online.handshakeComplete=false;online.matchSetupReady=false;online.lastMessageAt=0;online.mapReady=false;online.staticWorldLoaded=false;online.hasReceivedFirstSnapshot=false;online.pendingFirstSnapshot=null;online.runtimePlayersById.clear();online.connectionState="idle";online.sequence=0;online.lastSnapshotSequence=-1;online.lastSnapshotTime=0;online.lastInputSequence=0;online.inputLastSentAt=0;online.snapshotLastSentAt=0;online.snapshotBuffer.length=0;online.pendingRemoteInputs.clear();online.remoteInputsByPlayerId.clear();online.peerIdToPlayerId.clear();online.remoteInputState=null;online.lastGuestInputReceivedAt=0;online.firstGuestInputReceived=false;online.firstGuestInputApplied=false;online.sharedPaused=false;online.pauseSource="";online.pauseMessage="";online.roomCode="";online.signalingPeerId=null;online.hostPeerId=null;online.guestPeerId=null;online.remotePlayerId=null;online.localPlayerId=null;online.remoteName="Player 2";online.hostName="Player 1";online.localName="";online.players=[];online.lobbySettings={mode:"classic",mapId:"training",mapSource:"builtin",mapName:"Training Arena",duration:180};online.mapPayload=null;online.mapReceived=false;online.mapId=null;online.mapName="";online.awaitingOperation=false;online.pendingSetupAck=false;online.startRequestId="";online.localReady=false;online.remoteReady=false;online.lastSentInputSignature="";online._guestInputSendLogged=false;online.pingMs=null;online.pingSentAt=0;online.tearingDown=false;online.onlineLoopActive=false;online.gameStarted=false;online.previousLocalSettings=null;online.peer=null;online.connection=null;online.controlChannel=null;online.gameChannel=null;online.resumeToken="";online.reconnecting=false;online.reconnectAttempts=0;online.reconnectDeadline=0;clearTimeout(online.reconnectTimer);online.reconnectTimer=null;online.pendingJoinAcks.clear();onlineSyncPeerAliases();
 }
 function onlinePrepareMultiState(){
   onlineHostConnections();onlineHostInfo();onlineSetupAcks();
@@ -6110,7 +6110,7 @@ function onlinePrepareMultiState(){
 onlinePrepareMultiState();
 
 function onlineCloseTransport(){
-  online.tearingDown=true;online.connectionGeneration++;clearTimeout(online.connectionTimer);online.connectionTimer=null;clearTimeout(online.reconnectTimer);online.reconnectTimer=null;try{for(const c of onlineHostConnections().values())c.close();}catch(e){}onlineHostConnections().clear();onlineHostInfo().clear();onlineSetupAcks().clear();online.pendingJoinAcks.clear();online.pendingStartMatch=null;
+  online.tearingDown=true;online.connectionGeneration++;clearTimeout(online.connectionTimer);online.connectionTimer=null;clearTimeout(online.reconnectTimer);online.reconnectTimer=null;try{for(const c of onlineHostConnections().values())c.close();}catch(e){}onlineHostConnections().clear();onlineHostInfo().clear();onlineSetupAcks().clear();online.pendingJoinAcks.clear();
   try{online.connection?.close();}catch(e){}
   try{if(online.peer&&!online.peer.destroyed)online.peer.destroy();}catch(e){}
   online.connection=null;online.guestConnection=null;online.controlChannel=null;online.gameChannel=null;online.peer=null;online.connectionOpen=false;online.transportOpen=false;online.handshakeComplete=false;online.guestHandshakeComplete=false;online.connected=false;onlineSyncPeerAliases();
@@ -6296,9 +6296,19 @@ function onlineHandleControlMessage(msg,connection=online.connection){
         break;
       }
       case"setupAck":{
-        const id=String(connection?.rooftopPlayerId||"");if(!id||String(msg.matchId||"")!==String(online.startRequestId||""))return;if(msg.ok!==true)return;
-        if(online.gameStarted&&online.pendingJoinAcks.has(id)){online.pendingJoinAcks.delete(id);sendOnlineMessage({type:"startMatch",matchId:online.startRequestId,mode:MATCH.mode,duration:CURRENT_SETTINGS.duration,remainingTime:MATCH.timeLeft,mapId:String(online.mapId||""),mapName:String(online.mapName||""),startTime:performance.now(),paused:!!online.sharedPaused,pauseMessage:String(online.pauseMessage||""),initialSnapshot:onlineCaptureSnapshot()},connection);setTimeout(()=>{if(onlineHostInfo().get(id)?.connected)onlineSendSnapshotNow();},80);break;}
-        if(!online.pendingSetupAck)return;onlineSetupAcks().delete(id);if(onlineSetupAcks().size===0)onlineBeginHostMatchAfterAck();break;
+        const id=String(connection?.rooftopPlayerId||"");if(!id||String(msg.matchId||"")!==String(online.startRequestId||""))return;
+        if(msg.ok!==true)return;
+        if(online.gameStarted){
+          if(online.pendingJoinAcks.has(id)) online.pendingJoinAcks.delete(id);
+          const guest=onlineHostInfo().get(id);
+          if(guest?.connected){
+            sendOnlineMessage({type:"startMatch",matchId:online.startRequestId,mode:MATCH.mode,duration:CURRENT_SETTINGS.duration,remainingTime:MATCH.timeLeft,mapId:String(online.mapId||""),mapName:String(online.mapName||""),startTime:performance.now(),paused:false,pauseMessage:"",initialSnapshot:onlineCaptureSnapshot()},connection);
+          }
+          break;
+        }
+        if(!online.pendingSetupAck)return;
+        onlineSetupAcks().delete(id);
+        break;
       }
       case"leave":{
         try{connection?.close();}catch(e){}
@@ -6339,7 +6349,7 @@ function onlineHandleControlMessage(msg,connection=online.connection){
       if(!onlinePrepareClientMap(msg.map,msg.mapId,msg.mapName)){onlineSendControl({type:"setupAck",matchId,ok:false});onlineSetStatus("Could not load the host map.","bad");return;}
       online.startRequestId=matchId;online.mapReceived=true;online.mapId=String(msg.mapId);online.mapName=String(msg.mapName);online.matchSetupReady=true;
       if(!onlineApplyLobbySettings({mode:msg.mode,mapId:msg.mapId,mapName:msg.mapName,mapSource:msg.mapSource,duration:msg.duration})){onlineSendControl({type:"setupAck",matchId,ok:false});return;}
-      onlineConfigureClientPlayers();onlineSendControl({type:"setupAck",matchId,ok:true});const queuedStart=online.pendingStartMatch&&String(online.pendingStartMatch.matchId||"")===matchId?online.pendingStartMatch:null;online.pendingStartMatch=null;onlineSetStatus(queuedStart?"Starting online match…":"Map ready. Waiting for host to start…","good");onlineRenderLobby();if(queuedStart)onlineStartClientMatch(queuedStart);break;
+      onlineConfigureClientPlayers();onlineSendControl({type:"setupAck",matchId,ok:true});onlineSetStatus("Map ready. Waiting for host to start…","good");onlineRenderLobby();break;
     }
     case"startMatch":if(online.role==="client")onlineStartClientMatch(msg);break;
     case"matchPause":
@@ -6386,28 +6396,24 @@ async function startOnlineHostMatch(){
   if(guests.length>ONLINE_MAX_PLAYERS-1||!onlineHostAllReady())return;
   try{
     const info=onlineBuildSelectedRuntime(),payload=onlineSerializeLevel(info.level);
-    online.mapPayload=payload;online.mapId=String(info.id);online.mapName=info.name;online.pendingSetupAck=true;online.matchSetupReady=false;online.startRequestId=onlineNewRequestId();online.mode="starting";onlineSetupAcks().clear();guests.forEach(g=>onlineSetupAcks().add(g.id));onlineSetStatus("Starting match…","warn");onlineRenderLobby();
-    online.startSequenceTimer=setTimeout(()=>{if(online.pendingSetupAck&&online.mode==="starting"&&!online.gameStarted){online.pendingSetupAck=false;onlineSetupAcks().clear();online.mode="hostLobby";onlineSetStatus("Could not start match. A player did not finish loading.","bad");onlineRenderLobby();}},15000);
-    if(!guests.length){
-      // No guest acknowledgements are required for a host-only test match.
-      onlineBeginHostMatchAfterAck();
-      return;
+    online.mapPayload=payload;online.mapId=String(info.id);online.mapName=info.name;online.pendingSetupAck=false;online.matchSetupReady=true;online.startRequestId=onlineNewRequestId();online.mode="starting";onlineSetupAcks().clear();guests.forEach(g=>onlineSetupAcks().add(g.id));onlineSetStatus("Starting match…","warn");onlineRenderLobby();
+    if(guests.length){
+      onlineHostBroadcast({type:"matchSetup",matchId:online.startRequestId,map:payload,mapId:String(info.id),mapName:info.name,mapSource:info.source,mode:online.lobbySettings.mode,duration:online.lobbySettings.duration,players:online.players});
     }
-    onlineHostBroadcast({type:"matchSetup",matchId:online.startRequestId,map:payload,mapId:String(info.id),mapName:info.name,mapSource:info.source,mode:online.lobbySettings.mode,duration:online.lobbySettings.duration,players:online.players});
-    // DataConnections preserve send order. Guests queue startMatch until their map is ready.
+    // Start the host immediately. Each guest starts when its own map finishes loading.
     onlineBeginHostMatchAfterAck();
   }catch(e){online.mode="hostLobby";online.pendingSetupAck=false;onlineSetupAcks().clear();onlineSetStatus(e?.message||"Could not prepare the online match.","bad");onlineRenderLobby();}
 }
 function onlineBeginHostMatchAfterAck(){
-  if(online.role!=="host"||!online.pendingSetupAck||online.startRequestId==="")return;
-  online.pendingSetupAck=false;onlineSetupAcks().clear();clearTimeout(online.startSequenceTimer);online.startSequenceTimer=null;
+  if(online.role!=="host"||online.startRequestId==="")return;
+  online.pendingSetupAck=false;clearTimeout(online.startSequenceTimer);online.startSequenceTimer=null;
   try{
     const info=onlineBuildSelectedRuntime();if(info.source==="custom")selectCustomMap(info.id);else selectBuiltinMap(info.id);
     const guests=onlineHostConnectedGuests().sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true}));
     CURRENT_SETTINGS.playerCount=Math.min(ONLINE_MAX_PLAYERS,1+guests.length);CURRENT_SETTINGS.splitscreen=false;CURRENT_SETTINGS.mode=online.lobbySettings.mode;CURRENT_SETTINGS.duration=online.lobbySettings.duration;
     playerNames[0]=onlineSafeName(online.localName,"Player 1");guests.forEach((g,i)=>{playerNames[i+1]=onlineSafeName(g.name,`Player ${i+2}`);});
     startMatch({source:info.source,customMap:info.source==="custom"?info.level.customMap:null,onlineHost:true});onlineConfigureHostPlayers();online.mode="playing";online.gameStarted=true;online.transportOpen=onlineTransportOpen();online.connectionOpen=online.transportOpen;online.connected=online.transportOpen;online.handshakeComplete=true;online.mapReceived=true;online.matchSetupReady=true;onlineSetStatus("Online match started.","good");onlineSetHud(true);
-    onlineHostBroadcast({type:"startMatch",matchId:online.startRequestId,mode:MATCH.mode,duration:CURRENT_SETTINGS.duration,mapId:String(info.id),mapName:info.name,startTime:performance.now(),paused:!!online.sharedPaused,pauseMessage:String(online.pauseMessage||""),initialSnapshot:onlineCaptureSnapshot()});onlineUpdatePauseControl();onlineSendSnapshotNow();
+    onlineHostBroadcast({type:"matchStarted",matchId:online.startRequestId});onlineUpdatePauseControl();onlineSendSnapshotNow();
   }catch(e){online.gameStarted=false;online.mode="hostLobby";onlineSetStatus(e?.message||"Could not start the online match.","bad");onlineRenderLobby();}
 }
 function onlineSendSnapshotIfDue(nowMs){if(online.role!=="host"||online.mode!=="playing"||!onlineHostLiveConnections().length)return;const interval=1000/ONLINE_SNAPSHOT_RATE;if(nowMs-online.snapshotLastSentAt<interval)return;const snap=onlineCaptureSnapshot();if(onlineHostBroadcast(snap))online.snapshotLastSentAt=nowMs;}
