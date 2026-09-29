@@ -44,30 +44,252 @@
       <p class="subtitle">A simple home screen for testing and launching every browser build stored in the <code>builds/</code> folder.</p>
     </header>
     <main>
-      <div class="section-head"><h2>Available Builds</h2><span>Click a build to launch it</span></div>
-      <section class="build-grid" aria-label="Game builds">
-        <!-- Add more build cards here as you create new versions. -->
-        <article class="build">
-          <span class="build-badge">Build 1</span>
-          <h3>Rooftop Rumble v1</h3>
-          <p>Launch the first Rooftop Rumble test build.</p>
+      <div class="section-head">
+        <h2>Available Builds</h2>
+        <span id="build-count">Scanning builds/…</span>
+      </div>
+      <section id="build-grid" class="build-grid" aria-label="Game builds">
+        <div class="build" aria-live="polite">
+          <span class="build-badge">Loading</span>
+          <h3>Finding builds…</h3>
+          <p>The homepage is checking the GitHub repository for HTML files in <code>builds/</code>.</p>
           <div class="spacer"></div>
-          <a class="launch" href="builds/rooftop-rumble-v1.html">Launch Build →</a>
-        </article>
-        <!--
-        Example for the next build:
-        <article class="build">
-          <span class="build-badge">Build 2</span>
-          <h3>Rooftop Rumble v2</h3>
-          <p>Description of this build.</p>
-          <div class="spacer"></div>
-          <a class="launch" href="builds/rooftop-rumble-v2.html">Launch Build →</a>
-        </article>
-        -->
+        </div>
       </section>
-      <div class="tip"><strong>Adding a build:</strong> put the HTML file inside <code>builds/</code>, then copy one of the build cards above and change its name and filename.</div>
+      <div class="tip"><strong>Automatic builds:</strong> just put an HTML build inside <code>builds/</code> and publish it. The homepage reads the GitHub repository contents and creates the card automatically from the filename.</div>
     </main>
     <footer>Rooftop Rumble • GitHub Pages</footer>
   </div>
+
+  <script>
+    (() => {
+      const grid = document.getElementById('build-grid');
+      const count = document.getElementById('build-count');
+
+      function getGitHubRepo() {
+        const host = window.location.hostname;
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
+
+        // Standard GitHub Pages project/user-site URLs:
+        //   owner.github.io            -> owner / owner.github.io
+        //   owner.github.io/repo/      -> owner / repo
+        if (host.endsWith('.github.io')) {
+          const owner = host.slice(0, -'.github.io'.length);
+          const repo = pathParts[0] || `${owner}.github.io`;
+          return { owner, repo };
+        }
+
+        // A custom domain cannot be mapped back to its GitHub repository from
+        // browser JavaScript alone. Prefer a same-origin config file when present.
+        // This keeps normal github.io deployments completely automatic while
+        // allowing custom-domain deployments to opt in without editing this file.
+        return null;
+      }
+
+      function makeTitle(filename) {
+        const stem = filename.replace(/\.html?$/i, '');
+        const versioned = stem.match(/^rooftop-rumble-v(\d+(?:[.-]\d+)*)$/i);
+        if (versioned) {
+          const version = versioned[1].replace(/[-.]/g, '.');
+          return `Rooftop Rumble v${version}`;
+        }
+        return stem
+          .replace(/[-_]+/g, ' ')
+          .replace(/\b\w/g, c => c.toUpperCase());
+      }
+
+      function getVersionNumber(filename) {
+        const match = filename.match(/^rooftop-rumble-v(\d+(?:[.-]\d+)*)\.html$/i);
+        if (!match) return null;
+        return match[1].split(/[.-]/).map(Number);
+      }
+
+      function compareVersions(a, b) {
+        const av = getVersionNumber(a.name);
+        const bv = getVersionNumber(b.name);
+        if (av && bv) {
+          const len = Math.max(av.length, bv.length);
+          for (let i = 0; i < len; i++) {
+            const left = av[i] ?? 0;
+            const right = bv[i] ?? 0;
+            if (left !== right) return right - left;
+          }
+          return a.name.localeCompare(b.name);
+        }
+        if (av) return -1;
+        if (bv) return 1;
+        return a.name.localeCompare(b.name);
+      }
+
+      function buildCard(file) {
+        const article = document.createElement('article');
+        article.className = 'build';
+
+        const version = getVersionNumber(file.name);
+        const badge = document.createElement('span');
+        badge.className = 'build-badge';
+        badge.textContent = version ? `Build v${version.join('.')}` : 'HTML Build';
+
+        const title = document.createElement('h3');
+        title.textContent = makeTitle(file.name);
+
+        const description = document.createElement('p');
+        description.textContent = `Launch ${file.name}`;
+
+        const spacer = document.createElement('div');
+        spacer.className = 'spacer';
+
+        const link = document.createElement('a');
+        link.className = 'launch';
+        link.href = `builds/${encodeURIComponent(file.name)}`;
+        link.textContent = 'Launch Build →';
+        link.setAttribute('aria-label', `Launch ${makeTitle(file.name)}`);
+
+        article.append(badge, title, description, spacer, link);
+        return article;
+      }
+
+      function showError(message) {
+        count.textContent = 'Could not load builds';
+        grid.innerHTML = '';
+
+        const card = document.createElement('article');
+        card.className = 'build';
+        const badge = document.createElement('span');
+        badge.className = 'build-badge';
+        badge.textContent = 'Error';
+        const title = document.createElement('h3');
+        title.textContent = 'Build list unavailable';
+        const text = document.createElement('p');
+        text.textContent = message;
+        const spacer = document.createElement('div');
+        spacer.className = 'spacer';
+        card.append(badge, title, text, spacer);
+        grid.appendChild(card);
+      }
+
+      async function loadBuilds() {
+        let repo = getGitHubRepo();
+
+        try {
+          // Optional same-origin config for custom domains. Example contents:
+          // { "owner": "your-github-name", "repo": "your-repository" }
+          if (!repo && window.location.protocol !== 'file:') {
+            try {
+              const configResponse = await fetch('./github-pages.json', { cache: 'no-store' });
+              if (configResponse.ok) {
+                const config = await configResponse.json();
+                if (config && config.owner && config.repo) {
+                  repo = { owner: String(config.owner), repo: String(config.repo) };
+                }
+              }
+            } catch (_) {
+              // Config is optional. Continue to the local/static fallback.
+            }
+          }
+
+          if (repo) {
+            const builds = await fetchGitHubBuilds(repo);
+            renderBuilds(builds);
+            return;
+          }
+
+          // Custom-domain / local fallback: since all future builds use the
+          // agreed rooftop-rumble-vN.html naming format, probe the same-origin
+          // builds folder directly. This requires no repository configuration
+          // and works on GitHub Pages custom domains as well.
+          const builds = await discoverVersionedBuilds(250);
+          renderBuilds(builds);
+        } catch (error) {
+          console.error(error);
+          showError('The homepage could not discover the builds. Make sure the builds/ folder contains files named rooftop-rumble-vN.html.');
+        }
+      }
+
+      async function fetchGitHubBuilds(repo) {
+        // Use the repository tree rather than the contents endpoint so the
+        // homepage is not limited to a shallow directory response.
+        const branchCandidates = ['main', 'master'];
+        let lastError = null;
+
+        for (const branch of branchCandidates) {
+          try {
+            const apiUrl = `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+            const response = await fetch(apiUrl, {
+              headers: {
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28'
+              },
+              cache: 'no-store'
+            });
+
+            if (!response.ok) {
+              lastError = new Error(`GitHub returned ${response.status} for ${branch}.`);
+              continue;
+            }
+
+            const tree = await response.json();
+            const builds = Array.isArray(tree.tree)
+              ? tree.tree
+                  .filter(item => item.type === 'blob' && /^builds\/[^/]+\.html?$/i.test(item.path))
+                  .map(item => ({ name: item.path.slice('builds/'.length) }))
+                  .filter(item => item.name.toLowerCase() !== 'index.html')
+              : [];
+
+            return builds;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        throw lastError || new Error('Unable to read the GitHub repository tree.');
+      }
+
+      async function discoverVersionedBuilds(maxVersion) {
+        const builds = [];
+        const concurrency = 12;
+
+        for (let start = 1; start <= maxVersion; start += concurrency) {
+          const end = Math.min(start + concurrency - 1, maxVersion);
+          const checks = [];
+
+          for (let version = start; version <= end; version++) {
+            const name = `rooftop-rumble-v${version}.html`;
+            checks.push(fetch(`builds/${encodeURIComponent(name)}`, {
+              method: 'HEAD',
+              cache: 'no-store'
+            }).then(response => response.ok ? { name } : null).catch(() => null));
+          }
+
+          const results = await Promise.all(checks);
+          for (const result of results) {
+            if (result) builds.push(result);
+          }
+        }
+
+        return builds;
+      }
+
+      function renderBuilds(builds) {
+        builds.sort(compareVersions);
+        grid.innerHTML = '';
+
+        if (!builds.length) {
+          count.textContent = '0 builds found';
+          const empty = document.createElement('article');
+          empty.className = 'build';
+          empty.innerHTML = '<span class=\"build-badge\">Empty</span><h3>No builds yet</h3><p>Put an HTML file inside <code>builds/</code> and publish the repository.</p><div class=\"spacer\"></div>';
+          grid.appendChild(empty);
+          return;
+        }
+
+        count.textContent = `${builds.length} build${builds.length === 1 ? '' : 's'} found`;
+        for (const file of builds) grid.appendChild(buildCard(file));
+      }
+
+
+      loadBuilds();
+    })();
+  </script>
 </body>
 </html>
